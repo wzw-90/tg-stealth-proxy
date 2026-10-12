@@ -80,7 +80,7 @@
 ## 📥 Установка и запуск
 
 ### Вариант 1. Готовый бинарник (Рекомендуется)
-1. Перейдите в раздел [**Releases**](https://github.com) и скачайте архив `tg-stealth-proxy-windows-x64.zip`.
+1. Перейдите в раздел [**Releases**](https://github.com) и скачайте `tg-stealth-proxy.exe`.
 2. Распакуйте в любую удобную папку.
 3. Запустите `tg-stealth-proxy.exe`.
 4. Нажмите кнопку **«+ Добавить в Telegram»** и подтвердите добавление в Telegram Desktop.
