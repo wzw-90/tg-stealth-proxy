@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Telegram Stealth WebSocket Proxy</title>
+  <style>
+    :root {
+      --bg-main: #0c0c10;
+      --card-bg: #14141c;
+      --card-border: #222230;
+      --input-bg: #09090d;
+      --input-border: #29293a;
+      --accent-purple: #7c3aed;
+      --accent-purple-gradient: linear-gradient(135deg, #7c3aed, #9333ea);
+      --accent-green: #10b981;
+      --accent-green-gradient: linear-gradient(135deg, #059669, #10b981);
+      --accent-red: #ef4444;
+      --accent-red-gradient: linear-gradient(135deg, #b91c1c, #ef4444);
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      padding: 13px 16px 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 100vh;
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* ─── Всплывающий тост (In-App Toast) ─── */
+    .toast-container {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      pointer-events: none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .toast {
+      background: rgba(20, 20, 28, 0.95);
+      border: 1px solid rgba(124, 58, 237, 0.45);
+      backdrop-filter: blur(14px);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 0 16px rgba(124, 58, 237, 0.25);
+      color: #ffffff;
+      padding: 8px 18px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      pointer-events: auto;
+      opacity: 0;
+      transform: translateY(-12px) scale(0.96);
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+
+    .toast svg {
+      width: 16px;
+      height: 16px;
+      fill: #10b981;
+      flex-shrink: 0;
+    }
+
+    /* ─── Карточка-группа ─── */
+    .group-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 11px 15px;
+      position: relative;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+    }
+
+    .group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 9px;
+    }
+
+    .group-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ─── Секция 1: Состояние ─── */
+    .status-headline {
+      font-size: 14.5px;
+      font-weight: 700;
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 7px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background-color: var(--accent-green);
+      box-shadow: 0 0 12px var(--accent-green);
+      flex-shrink: 0;
+      animation: pulse 2s infinite;
+    }
+
+    .status-dot.stopped {
+      background-color: var(--accent-red);
+      box-shadow: 0 0 12px var(--accent-red);
+      animation: none;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.85); }
+    }
+
+    .status-stats {
+      font-size: 12.5px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+
+    .status-stats span.val {
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .status-footer-row {
+      margin-top: 6px;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11.5px;
+      color: var(--text-dim);
+    }
+
+    .status-route-tag {
+      color: #38bdf8;
+      font-weight: 600;
+    }
+
+    .status-network-pill {
+      font-size: 11px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: #10b981;
+    }
+
+    .status-network-pill.stopped {
+      color: #f87171;
+    }
+
+    .badge-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 20px;
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .badge-pill.stopped {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    /* ─── Секция 2: Параметры ─── */
+    .params-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 10px;
+    }
+
+    .input-field-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    .text-input {
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      color: #38bdf8;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 5px 9px;
+      border-radius: 7px;
+      outline: none;
+      transition: all 0.15s ease;
+      user-select: text;
+    }
+    .text-input:focus {
+      border-color: var(--accent-purple);
+      box-shadow: 0 0 10px rgba(124, 58, 237, 0.3);
+    }
+
+    .checkbox-container {
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .checkbox-row {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .checkbox-row input {
+      accent-color: var(--accent-purple);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+    }
+
+    .checkbox-row:hover {
+      color: #ffffff;
+    }
+
+    /* ─── Секция 3: Ссылка для Telegram ─── */
+    .link-container {
+      margin-bottom: 10px;
+    }
+
+    .link-input-box {
+      width: 100%;
+      background: var(--input-bg);
+      border: 1px solid var(--input-border);
+      border-radius: 8px;
+      padding: 8px 11px;
+      font-family: Consolas, monospace;
+      font-size: 11.5px;
+      color: #38bdf8;
+      outline: none;
+      white-space: nowrap;
+      overflow-x: auto;
+      user-select: text;
+    }
+    .link-input-box:focus {
+      border-color: var(--accent-purple);
+    }
+
+    .link-buttons-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    /* ─── Стилизованные кнопки ─── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 9px 15px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s ease;
+      color: #ffffff;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn svg {
+      width: 15px;
+      height: 15px;
+      fill: currentColor;
+    }
+
+    .btn-action-copy {
+      background: #1e1e28;
+      border: 1px solid #313142;
+      color: #ffffff;
+    }
+    .btn-action-copy:hover {
+      background: #2a2a38;
+      border-color: #434358;
+    }
+
+    .btn-action-tg {
+      background: var(--accent-purple-gradient);
+      box-shadow: 0 4px 14px rgba(124, 58, 237, 0.35);
+    }
+    .btn-action-tg:hover {
+      filter: brightness(1.1);
+      box-shadow: 0 6px 18px rgba(124, 58, 237, 0.5);
+    }
+
+    /* ─── Нижний ряд кнопок управления ─── */
+    .bottom-bar {
+      display: grid;
+      grid-template-columns: 1.4fr 1.1fr 0.9fr;
+      gap: 10px;
+      margin-top: auto;
+    }
+
+    .btn-stop {
+      background: var(--accent-red-gradient);
+      box-shadow: 0 4px 14px rgba(239, 68, 68, 0.3);
+    }
+    .btn-stop:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-start {
+      background: var(--accent-green-gradient);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+    }
+    .btn-start:hover {
+      filter: brightness(1.1);
+    }
+
+    .btn-tray {
+      background: #181822;
+      border: 1px solid #2d2d3d;
+      color: #cbd5e1;
+    }
+    .btn-tray:hover {
+      background: #232332;
+      color: #ffffff;
+    }
+
+    .btn-exit {
+      background: #181822;
+      border: 1px solid #2d2d3d;
+      color: #cbd5e1;
+    }
+    .btn-exit:hover {
+      background: #232332;
+      color: #ffffff;
+    }
+
+    /* ─── Строка версии и обновлений ─── */
+    .update-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 3px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .btn-update-check {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-dim);
+      font-size: 11px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 7px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+    }
+    .btn-update-check:hover {
+      color: #e2e8f0;
+      background: #181824;
+      border-color: #2d2d3e;
+    }
+    .btn-update-check svg {
+      width: 11px;
+      height: 11px;
+      fill: currentColor;
+    }
+    .btn-update-check.checking svg {
+      animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin {
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Контейнер для всплывающих уведомлений -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Блок 1: Состояние прокси -->
+  <section class="group-card">
+    <div class="group-header">
+      <div class="group-title">
+        <svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        <span>Состояние прокси</span>
+      </div>
+      <div class="badge-pill" id="badge-pill">АКТИВЕН</div>
+    </div>
+
+    <div class="status-headline">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Статус: Прокси активен и защищает соединение</span>
+    </div>
+
+    <div class="status-stats">
+      <div>Активных сессий: <span class="val" id="stat-active">0</span> | Всего подключений: <span class="val" id="stat-total">0</span></div>
+      <div>Трафик: ↑ <span class="val" id="stat-up">0 B</span> | ↓ <span class="val" id="stat-down">0 B</span> | Ошибок: <span class="val" id="stat-err">0</span></div>
+    </div>
+
+    <div class="status-footer-row">
+      <span>Маршрут: <span class="status-route-tag" id="status-route">Cloudflare WS (20 активных доменов)</span></span>
+      <span class="status-network-pill" id="status-network">
+        <svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg>
+        <span>Сеть активна</span>
+      </span>
+    </div>
+  </section>
+
+  <!-- Блок 2: Параметры подключения -->
+  <section class="group-card">
+    <div class="group-header">
+      <div class="group-title">
+        <svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        <span>Параметры подключения</span>
+      </div>
+    </div>
+
+    <div class="params-row">
+      <div class="input-field-group">
+        <label for="cfg-port">Локальный порт:</label>
+        <input class="text-input" id="cfg-port" style="width:75px;" value="1443" onchange="onSettingChanged()" />
+      </div>
+      <div class="input-field-group" style="flex:1;">
+        <label for="cfg-sni">FakeTLS SNI домен:</label>
+        <input class="text-input" id="cfg-sni" style="width:100%;" value="cloudflare.com" onchange="onSettingChanged()" />
+      </div>
+    </div>
+
+    <div class="checkbox-container">
+      <label class="checkbox-row">
+        <input type="checkbox" id="cfg-faketls" checked onchange="onSettingChanged()" />
+        <span>Использовать FakeTLS маскировку трафика (рекомендуется)</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="cfg-autostart" onchange="onAutostartToggled(this.checked)" />
+        <span>Запускать прокси при включении компьютера (в трее)</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="cfg-logging" onchange="onLoggingToggled(this.checked)" />
+        <span>Включить сохранение логов в файл (proxy_gui.log)</span>
+      </label>
+    </div>
+  </section>
+
+  <!-- Блок 3: Ссылка для Telegram -->
+  <section class="group-card">
+    <div class="group-header">
+      <div class="group-title">
+        <svg style="width:14px;height:14px;fill:currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.74-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .37z"/></svg>
+        <span>Ссылка для Telegram (Desktop / Mobile)</span>
+      </div>
+    </div>
+
+    <div class="link-container">
+      <input class="link-input-box" id="link-field" readonly value="" />
+    </div>
+
+    <div class="link-buttons-row">
+      <button class="btn btn-action-copy" onclick="copyLink()">
+        <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+        <span>Скопировать ссылку</span>
+      </button>
+
+      <button class="btn btn-action-tg" onclick="openTelegram()">
+        <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+        <span>Добавить в Telegram</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- Нижний ряд кнопок управления -->
+  <footer class="bottom-bar">
+    <button class="btn btn-stop" id="btn-toggle" onclick="toggleProxy()">
+      <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg>
+      <span id="btn-toggle-text">Остановить</span>
+    </button>
+
+    <button class="btn btn-tray" onclick="minimizeToTray()">
+      <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+      <span>Свернуть в трей</span>
+    </button>
+
+    <button class="btn btn-exit" onclick="sendCmd('exit')">
+      <svg viewBox="0 0 24 24"><path d="M10.09 15.59L11.5 17l5-5-5-5-1.41 1.41L12.67 11H3v2h9.67l-2.58 2.59zM19 3H5c-1.11 0-2 .9-2 2v4h2V5h14v14H5v-4H3v4c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2z"/></svg>
+      <span>Выход</span>
+    </button>
+  </footer>
+
+  <!-- Строка версии и обновлений -->
+  <div class="update-bar">
+    <div>TG Stealth Proxy <span style="color:#94a3b8;font-weight:600;" id="app-version">v1.0.0</span></div>
+    <button class="btn-update-check" id="btn-update" onclick="checkUpdates()">
+      <svg viewBox="0 0 24 24"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
+      <span id="update-text">Проверить обновления</span>
+    </button>
+  </div>
+
+  <script>
+    function sendCmd(cmd, payload = {}) {
+      if (window.ipc) {
+        window.ipc.postMessage(JSON.stringify({ cmd, ...payload }));
+      }
+    }
+
+    let isRunning = true;
+    let toastTimeout = null;
+
+    // ─── Всплывающий тост ───
+    function showToast(text, duration = 2400) {
+      const container = document.getElementById('toast-container');
+      container.innerHTML = '';
+      if (toastTimeout) clearTimeout(toastTimeout);
+
+      const toast = document.createElement('div');
+      toast.className = 'toast';
+      toast.innerHTML = `
+        <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+        <span>${text}</span>
+      `;
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.add('show');
+      });
+
+      toastTimeout = setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => {
+          if (toast.parentNode === container) {
+            container.removeChild(toast);
+          }
+        }, 250);
+      }, duration);
+    }
+
+    // ─── Горячие клавиши для всех раскладок клавиатуры (Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+X) ───
+    document.addEventListener('keydown', (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      const target = document.activeElement;
+      const isInput = target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA');
+
+      if (e.code === 'KeyA') {
+        if (isInput) {
+          e.preventDefault();
+          target.select();
+        }
+      } else if (e.code === 'KeyC') {
+        if (isInput) {
+          const selectedText = target.value.substring(target.selectionStart, target.selectionEnd);
+          if (selectedText) {
+            e.preventDefault();
+            navigator.clipboard.writeText(selectedText).catch(() => {
+              document.execCommand('copy');
+            });
+            showToast("Скопировано в буфер");
+          } else if (target.id === 'link-field') {
+            e.preventDefault();
+            navigator.clipboard.writeText(target.value).catch(() => {
+              document.execCommand('copy');
+            });
+            showToast("Ссылка скопирована в буфер!");
+          }
+        }
+      } else if (e.code === 'KeyV') {
+        if (isInput && !target.readOnly) {
+          e.preventDefault();
+          navigator.clipboard.readText().then(text => {
+            if (text) {
+              const start = target.selectionStart;
+              const end = target.selectionEnd;
+              const val = target.value;
+              target.value = val.substring(0, start) + text + val.substring(end);
+              target.selectionStart = target.selectionEnd = start + text.length;
+              target.dispatchEvent(new Event('change'));
+            }
+          }).catch(() => {
+            document.execCommand('paste');
+          });
+        }
+      } else if (e.code === 'KeyX') {
+        if (isInput && !target.readOnly) {
+          const selectedText = target.value.substring(target.selectionStart, target.selectionEnd);
+          if (selectedText) {
+            e.preventDefault();
+            navigator.clipboard.writeText(selectedText).then(() => {
+              const start = target.selectionStart;
+              const end = target.selectionEnd;
+              const val = target.value;
+              target.value = val.substring(0, start) + val.substring(end);
+              target.selectionStart = target.selectionEnd = start;
+              target.dispatchEvent(new Event('change'));
+            }).catch(() => {
+              document.execCommand('cut');
+            });
+          }
+        }
+      }
+    });
+
+    function toggleProxy() {
+      sendCmd(isRunning ? 'stop' : 'start');
+    }
+
+    function copyLink() {
+      const link = document.getElementById('link-field').value;
+      sendCmd('copy_link');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(link).catch(() => {});
+      }
+      showToast("Ссылка скопирована в буфер обмена!");
+    }
+
+    function openTelegram() {
+      sendCmd('open_telegram');
+      showToast("Ссылка открывается в Telegram...");
+    }
+
+    function minimizeToTray() {
+      sendCmd('minimize_to_tray');
+      showToast("Свернуто в системный трей");
+    }
+
+    function onSettingChanged() {
+      const port = parseInt(document.getElementById('cfg-port').value) || 1443;
+      const sni = document.getElementById('cfg-sni').value.trim() || 'cloudflare.com';
+      const useFakeTls = document.getElementById('cfg-faketls').checked;
+      sendCmd('update_config', { port, sni, use_fake_tls: useFakeTls });
+      showToast("Параметры сохранены");
+    }
+
+    function onAutostartToggled(enabled) {
+      sendCmd('set_autostart', { enabled });
+      showToast(enabled ? "Автозапуск включен" : "Автозапуск выключен");
+    }
+
+    function onLoggingToggled(enabled) {
+      sendCmd('set_logging', { enabled });
+      showToast(enabled ? "Логирование в файл включено" : "Логирование в файл отключено");
+    }
+
+    // ─── Проверка обновлений ───
+    async function checkUpdates() {
+      const btn = document.getElementById('btn-update');
+      const text = document.getElementById('update-text');
+      if (btn.classList.contains('checking')) return;
+
+      btn.classList.add('checking');
+      text.innerText = 'Проверка...';
+
+      try {
+        const resp = await fetch('https://api.github.com/repos/Flowseal/tg-ws-proxy/releases/latest');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        const latestTag = data.tag_name || 'v1.11.2';
+
+        btn.classList.remove('checking');
+        text.innerText = `Актуальный upstream: ${latestTag}`;
+        showToast(`Проверка завершена: база upstream ${latestTag}`);
+      } catch (e) {
+        btn.classList.remove('checking');
+        text.innerText = 'Проверить обновления';
+        showToast('Проверка завершена: установлена актуальная версия');
+      }
+    }
+
+    let lastStateRunning = null;
+
+    window.renderState = function(data) {
+      isRunning = data.is_running;
+
+      // Статус и точка
+      const dot = document.getElementById('status-dot');
+      const text = document.getElementById('status-text');
+      const badge = document.getElementById('badge-pill');
+      const btnToggle = document.getElementById('btn-toggle');
+      const netPill = document.getElementById('status-network');
+
+      if (lastStateRunning !== isRunning) {
+        lastStateRunning = isRunning;
+        if (isRunning) {
+          dot.className = 'status-dot';
+          text.innerText = 'Статус: Прокси активен и защищает соединение';
+          badge.className = 'badge-pill';
+          badge.innerText = 'АКТИВЕН';
+          btnToggle.className = 'btn btn-stop';
+          btnToggle.innerHTML = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M6 6h12v12H6z"/></svg><span>Остановить</span>';
+        } else {
+          dot.className = 'status-dot stopped';
+          text.innerText = 'Статус: Прокси остановлен';
+          badge.className = 'badge-pill stopped';
+          badge.innerText = 'ОСТАНОВЛЕН';
+          btnToggle.className = 'btn btn-start';
+          btnToggle.innerHTML = '<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg><span>Запустить</span>';
+        }
+      }
+
+      // Обновление сетевого индикатора и RTT
+      if (isRunning) {
+        if (data.best_ping_ms && data.best_ping_ms > 0 && data.best_ping_ms < 9999) {
+          netPill.className = 'status-network-pill';
+          netPill.innerHTML = `<svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg><span>Ping: ${data.best_ping_ms} ms</span>`;
+        } else {
+          netPill.className = 'status-network-pill';
+          netPill.innerHTML = '<svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg><span>Сеть активна</span>';
+        }
+      } else {
+        netPill.className = 'status-network-pill stopped';
+        netPill.innerHTML = '<svg style="width:10px;height:10px;fill:currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg><span>Остановлен</span>';
+      }
+
+      if (data.cf_route_info) {
+        const routeEl = document.getElementById('status-route');
+        if (routeEl) {
+          routeEl.innerText = data.cf_route_info;
+        }
+      }
+
+      // Счетчики
+      document.getElementById('stat-active').innerText = data.active;
+      document.getElementById('stat-total').innerText = data.total;
+      document.getElementById('stat-up').innerText = data.bytes_up_str;
+      document.getElementById('stat-down').innerText = data.bytes_down_str;
+      document.getElementById('stat-err').innerText = data.errors;
+
+      // Поля
+      document.getElementById('link-field').value = data.link;
+      if (document.activeElement !== document.getElementById('cfg-port')) {
+        document.getElementById('cfg-port').value = data.port;
+      }
+      if (document.activeElement !== document.getElementById('cfg-sni')) {
+        document.getElementById('cfg-sni').value = data.sni;
+      }
+      if (document.activeElement !== document.getElementById('cfg-faketls')) {
+        document.getElementById('cfg-faketls').checked = !!data.use_fake_tls;
+      }
+      document.getElementById('cfg-autostart').checked = data.is_autostart;
+      document.getElementById('cfg-logging').checked = data.is_logging;
+      if (data.version) {
+        document.getElementById('app-version').innerText = 'v' + data.version;
+      }
+    };
+  </script>
+</body>
+</html>

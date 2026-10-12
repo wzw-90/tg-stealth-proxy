@@ -1,0 +1,25 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+
+# Local proxy config and logs
+config.json
+*.log
+*.log.*
+proxy_gui.log*
+cf_domains.cache
+
+# Standalone Windows binaries in root
+/*.exe
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store

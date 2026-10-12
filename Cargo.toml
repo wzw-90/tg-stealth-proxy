@@ -1,0 +1,54 @@
+[package]
+name = "tg-stealth-proxy"
+version = "1.0.0"
+edition = "2021"
+authors = ["Flowseal contributors", "Telegram Stealth Proxy Authors"]
+description = "High-performance Telegram MTProto & WebSocket Stealth Proxy with Modern Desktop GUI for Windows"
+readme = "README.md"
+license = "MIT"
+keywords = ["telegram", "proxy", "stealth", "mtproto", "websocket"]
+categories = ["network-programming", "gui"]
+build = "build.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+aes = "0.8"
+ctr = "0.9"
+sha2 = "0.10"
+hmac = "0.12"
+bytes = "1.0"
+futures-util = "0.3"
+rand = "0.8"
+hex = "0.4"
+tokio-native-tls = "0.3"
+tokio-tungstenite = "0.21"
+http = "1.0"
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_Controls",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_Graphics_Dwm",
+    "Win32_System_JobObjects",
+    "Win32_Security",
+] }
+wry = "0.57"
+tao = "0.37"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+winres = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
