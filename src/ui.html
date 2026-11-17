@@ -482,6 +482,10 @@
         <span>Использовать FakeTLS маскировку трафика (рекомендуется)</span>
       </label>
       <label class="checkbox-row">
+        <input type="checkbox" id="cfg-nosecure" onchange="onSettingChanged()" />
+        <span>Режим --no-secure: порт 80 без TLS (обход блокировок Cloudflare)</span>
+      </label>
+      <label class="checkbox-row">
         <input type="checkbox" id="cfg-autostart" onchange="onAutostartToggled(this.checked)" />
         <span>Запускать прокси при включении компьютера (в трее)</span>
       </label>
@@ -674,7 +678,8 @@
       const port = parseInt(document.getElementById('cfg-port').value) || 1443;
       const sni = document.getElementById('cfg-sni').value.trim() || 'cloudflare.com';
       const useFakeTls = document.getElementById('cfg-faketls').checked;
-      sendCmd('update_config', { port, sni, use_fake_tls: useFakeTls });
+      const noSecure = document.getElementById('cfg-nosecure').checked;
+      sendCmd('update_config', { port, sni, use_fake_tls: useFakeTls, no_secure: noSecure });
       showToast("Параметры сохранены");
     }
 
@@ -782,6 +787,9 @@
       }
       if (document.activeElement !== document.getElementById('cfg-faketls')) {
         document.getElementById('cfg-faketls').checked = !!data.use_fake_tls;
+      }
+      if (document.activeElement !== document.getElementById('cfg-nosecure')) {
+        document.getElementById('cfg-nosecure').checked = !!data.no_secure;
       }
       document.getElementById('cfg-autostart').checked = data.is_autostart;
       document.getElementById('cfg-logging').checked = data.is_logging;

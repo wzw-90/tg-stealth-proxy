@@ -25,7 +25,59 @@ use tokio_tungstenite::{tungstenite::protocol::Message, WebSocketStream};
 
 type Aes256Ctr = ctr::Ctr128BE<aes::Aes256>;
 type HmacSha256 = Hmac<Sha256>;
-type WsStream = WebSocketStream<tokio_native_tls::TlsStream<tokio::net::TcpStream>>;
+
+pub enum StreamWrapper {
+    Tls(tokio_native_tls::TlsStream<tokio::net::TcpStream>),
+    Plain(tokio::net::TcpStream),
+}
+
+impl tokio::io::AsyncRead for StreamWrapper {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamWrapper::Tls(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+            StreamWrapper::Plain(s) => std::pin::Pin::new(s).poll_read(cx, buf),
+        }
+    }
+}
+
+impl tokio::io::AsyncWrite for StreamWrapper {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        match self.get_mut() {
+            StreamWrapper::Tls(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+            StreamWrapper::Plain(s) => std::pin::Pin::new(s).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamWrapper::Tls(s) => std::pin::Pin::new(s).poll_flush(cx),
+            StreamWrapper::Plain(s) => std::pin::Pin::new(s).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.get_mut() {
+            StreamWrapper::Tls(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+            StreamWrapper::Plain(s) => std::pin::Pin::new(s).poll_shutdown(cx),
+        }
+    }
+}
+
+type WsStream = WebSocketStream<StreamWrapper>;
 type BoxRead = Box<dyn AsyncRead + Send + Unpin>;
 type BoxWrite = Box<dyn AsyncWrite + Send + Unpin>;
 
@@ -241,6 +293,7 @@ pub struct Config {
     pub log_backups: usize, // #10
     pub prefer_direct_ws: bool,
     pub force_test_dc: bool, // #9
+    pub no_secure: bool,
     pub trace: bool,
     pub verbose: bool,
 }
@@ -267,6 +320,7 @@ impl Config {
             log_backups: 1,
             prefer_direct_ws: false,
             force_test_dc: false,
+            no_secure: false,
             trace: false,
             verbose: false,
         }
@@ -293,6 +347,7 @@ impl Config {
         let mut log_backups = 1usize; // #10
         let mut prefer_direct_ws = false;
         let mut force_test_dc = false; // #9
+        let mut no_secure = false;
         let mut trace = false;
         let mut verbose = false;
 
@@ -358,6 +413,7 @@ impl Config {
                 }
                 "--prefer-direct-ws" => prefer_direct_ws = true,
                 "--force-test-dc" => force_test_dc = true, // #9
+                "--no-secure" => no_secure = true,
                 "--trace" => trace = true,
                 "--verbose" | "-v" => verbose = true,
                 other => return Err(format!("unknown argument: {other}")),
@@ -390,6 +446,7 @@ impl Config {
             log_backups,
             prefer_direct_ws,
             force_test_dc,
+            no_secure,
             trace,
             verbose,
         })
@@ -436,6 +493,7 @@ fn print_help() {
     println!("  --log-backups N            Количество резервных копий лога (по умолчанию 1)");
     println!("  --prefer-direct-ws         Сначала пробовать прямой Telegram WebSocket");
     println!("  --force-test-dc            Перенаправлять весь трафик на тестовые DC Telegram");
+    println!("  --no-secure                Использовать порт 80 (HTTP WebSocket) для Cloudflare fallback");
     println!("  --trace                    Логировать размеры всех передаваемых фреймов");
     println!("  -v, --verbose              Подробная диагностика соединений");
 }
@@ -1249,7 +1307,35 @@ async fn connect_ws(
         .header("Sec-WebSocket-Protocol", "binary")
         .body(())
         .map_err(|e| e.to_string())?;
-    let (ws_stream, _) = tokio_tungstenite::client_async(request, tls_stream)
+    let (ws_stream, _) = tokio_tungstenite::client_async(request, StreamWrapper::Tls(tls_stream))
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(ws_stream)
+}
+
+async fn connect_ws_plain(
+    target_ip: &str,
+    domain: &str,
+) -> Result<WsStream, String> {
+    let tcp_stream = TcpStream::connect(format!("{target_ip}:80"))
+        .await
+        .map_err(|e| e.to_string())?;
+    set_tcp_options(&tcp_stream, None);
+    let ws_url = format!("ws://{domain}/apiws");
+    let request = http::Request::builder()
+        .uri(&ws_url)
+        .header("Host", domain)
+        .header("Upgrade", "websocket")
+        .header("Connection", "Upgrade")
+        .header("Sec-WebSocket-Version", "13")
+        .header(
+            "Sec-WebSocket-Key",
+            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+        )
+        .header("Sec-WebSocket-Protocol", "binary")
+        .body(())
+        .map_err(|e| e.to_string())?;
+    let (ws_stream, _) = tokio_tungstenite::client_async(request, StreamWrapper::Plain(tcp_stream))
         .await
         .map_err(|e| e.to_string())?;
     Ok(ws_stream)
@@ -1877,9 +1963,11 @@ async fn read_client_init(
         };
 
         let server_hello = build_server_hello(secret, &client_random, &session_id);
+        let delay_ms = 8 + (rand::thread_rng().next_u32() as u64 % 17);
+        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         stream.write_all(&server_hello).await?;
         logger.log(format!(
-            "[{label}] Fake TLS verified; ServerHello sent: {} bytes",
+            "[{label}] Fake TLS verified; ServerHello sent (delay {delay_ms}ms): {} bytes",
             server_hello.len()
         ));
 
@@ -1986,7 +2074,8 @@ fn build_server_hello(secret: &[u8], client_random: &[u8], session_id: &[u8]) ->
     sh.extend_from_slice(&[0x00, 0x2b, 0x00, 0x02, 0x03, 0x04]);
 
     let ccs = [0x14, 0x03, 0x03, 0x00, 0x01, 0x01];
-    let encrypted_size = 1900 + (rand::thread_rng().next_u32() as usize % 201);
+    // Modern Fake TLS record size matching telemt (64-160 bytes instead of legacy 1900-2100)
+    let encrypted_size = 64 + (rand::thread_rng().next_u32() as usize % 97);
     let mut encrypted_data = vec![0u8; encrypted_size];
     rand::thread_rng().fill_bytes(&mut encrypted_data);
 
@@ -2495,7 +2584,8 @@ async fn bridge_fallback(
             logger.log(format!(
                 "fallback: trying Cloudflare Worker {worker_domain} for DC{dc}"
             ));
-            match connect_ws_worker(worker_domain, dc, target_ip).await {
+            let no_sec = config.no_secure;
+            match connect_ws_worker(worker_domain, dc, target_ip, no_sec).await {
                 Ok(ws) => {
                     logger.log(format!(
                         "fallback: Cloudflare Worker {worker_domain} connected"
@@ -2510,7 +2600,7 @@ async fn bridge_fallback(
                         let dc_clone = dc;
                         tokio::spawn(async move {
                             if let Ok(ws2) =
-                                connect_ws_worker(&domain_clone, dc_clone, &target_clone).await
+                                connect_ws_worker(&domain_clone, dc_clone, &target_clone, no_sec).await
                             {
                                 pool_clone.push(dc_clone, ws2, domain_clone).await;
                             }
@@ -2535,8 +2625,35 @@ async fn bridge_fallback(
     if !is_test_dc && config.fallback_cfproxy {
         let domains = cfproxy_domains(&config, dc, &cf_domains, &dc_balancer);
         for domain in domains {
-            logger.log(format!("fallback: trying Cloudflare proxy {domain}"));
-            match connect_ws_any(&domain, std::slice::from_ref(&domain)).await {
+            logger.log(format!(
+                "fallback: trying Cloudflare proxy {domain} (no_secure={})",
+                config.no_secure
+            ));
+            let ws_res = if config.no_secure {
+                connect_ws_plain(&domain, &domain).await
+            } else {
+                match tokio::time::timeout(
+                    Duration::from_secs(4),
+                    connect_ws_any(&domain, std::slice::from_ref(&domain)),
+                )
+                .await
+                {
+                    Ok(Ok(ws)) => Ok(ws),
+                    Ok(Err(err)) => {
+                        logger.log(format!(
+                            "fallback: CF proxy {domain} TLS failed: {err}; falling back to port 80"
+                        ));
+                        connect_ws_plain(&domain, &domain).await
+                    }
+                    Err(_) => {
+                        logger.log(format!(
+                            "fallback: CF proxy {domain} TLS timed out (4s); falling back to port 80"
+                        ));
+                        connect_ws_plain(&domain, &domain).await
+                    }
+                }
+            };
+            match ws_res {
                 Ok(ws) => {
                     logger.log(format!("fallback: Cloudflare proxy {domain} connected"));
                     if let Some(base_domain) = domain.strip_prefix(&format!("kws{dc}.")) {
@@ -2596,36 +2713,62 @@ async fn connect_ws_worker(
     worker_domain: &str,
     dc: i16,
     fallback_dst: &str,
+    no_secure: bool,
 ) -> Result<WsStream, String> {
-    let tls = make_tls_connector()?;
-    let tcp_stream = TcpStream::connect(format!("{worker_domain}:443"))
-        .await
-        .map_err(|e| e.to_string())?;
-    set_tcp_options(&tcp_stream, None);
-    let tls_stream = tls
-        .connect(worker_domain, tcp_stream)
-        .await
-        .map_err(|e| e.to_string())?;
-
     let path = format!("/apiws?dst={}&dc={}", fallback_dst, dc);
-    let ws_url = format!("wss://{worker_domain}{path}");
-    let request = http::Request::builder()
-        .uri(&ws_url)
-        .header("Host", worker_domain)
-        .header("Upgrade", "websocket")
-        .header("Connection", "Upgrade")
-        .header("Sec-WebSocket-Version", "13")
-        .header(
-            "Sec-WebSocket-Key",
-            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
-        )
-        .header("Sec-WebSocket-Protocol", "binary")
-        .body(())
-        .map_err(|e| e.to_string())?;
-    let (ws_stream, _) = tokio_tungstenite::client_async(request, tls_stream)
-        .await
-        .map_err(|e| e.to_string())?;
-    Ok(ws_stream)
+    if no_secure {
+        let tcp_stream = TcpStream::connect(format!("{worker_domain}:80"))
+            .await
+            .map_err(|e| e.to_string())?;
+        set_tcp_options(&tcp_stream, None);
+        let ws_url = format!("ws://{worker_domain}{path}");
+        let request = http::Request::builder()
+            .uri(&ws_url)
+            .header("Host", worker_domain)
+            .header("Upgrade", "websocket")
+            .header("Connection", "Upgrade")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Protocol", "binary")
+            .body(())
+            .map_err(|e| e.to_string())?;
+        let (ws_stream, _) = tokio_tungstenite::client_async(request, StreamWrapper::Plain(tcp_stream))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ws_stream)
+    } else {
+        let tls = make_tls_connector()?;
+        let tcp_stream = TcpStream::connect(format!("{worker_domain}:443"))
+            .await
+            .map_err(|e| e.to_string())?;
+        set_tcp_options(&tcp_stream, None);
+        let tls_stream = tls
+            .connect(worker_domain, tcp_stream)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let ws_url = format!("wss://{worker_domain}{path}");
+        let request = http::Request::builder()
+            .uri(&ws_url)
+            .header("Host", worker_domain)
+            .header("Upgrade", "websocket")
+            .header("Connection", "Upgrade")
+            .header("Sec-WebSocket-Version", "13")
+            .header(
+                "Sec-WebSocket-Key",
+                tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+            )
+            .header("Sec-WebSocket-Protocol", "binary")
+            .body(())
+            .map_err(|e| e.to_string())?;
+        let (ws_stream, _) = tokio_tungstenite::client_async(request, StreamWrapper::Tls(tls_stream))
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(ws_stream)
+    }
 }
 
 // ============================================================

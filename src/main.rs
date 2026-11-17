@@ -46,6 +46,8 @@ pub struct AppConfig {
     pub sni: String,
     pub use_fake_tls: bool,
     pub logging: bool,
+    #[serde(default)]
+    pub no_secure: bool,
 }
 
 impl Default for AppConfig {
@@ -55,6 +57,7 @@ impl Default for AppConfig {
             sni: "cloudflare.com".to_string(),
             use_fake_tls: true,
             logging: false,
+            no_secure: false,
         }
     }
 }
@@ -102,6 +105,7 @@ struct IpcMessage {
     port: Option<u16>,
     sni: Option<String>,
     use_fake_tls: Option<bool>,
+    no_secure: Option<bool>,
     enabled: Option<bool>,
     url: Option<String>,
 }
@@ -140,6 +144,7 @@ struct AppShared {
     port: Arc<Mutex<u16>>,
     sni: Arc<Mutex<String>>,
     use_fake_tls: Arc<AtomicBool>,
+    no_secure: Arc<AtomicBool>,
     tray: Arc<Mutex<Option<tray::TrayIcon>>>,
     hicon_dark: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
     hicon_green: windows_sys::Win32::UI::WindowsAndMessaging::HICON,
@@ -150,12 +155,14 @@ impl AppShared {
         let p = *self.port.lock().unwrap();
         let s = self.sni.lock().unwrap().clone();
         let tls = self.use_fake_tls.load(Ordering::Relaxed);
+        let no_sec = self.no_secure.load(Ordering::Relaxed);
         let log = self.logger.is_enabled();
         let cfg = AppConfig {
             port: p,
             sni: s,
             use_fake_tls: tls,
             logging: log,
+            no_secure: no_sec,
         };
         cfg.save();
     }
@@ -189,9 +196,11 @@ fn start_proxy_task(shared: &AppShared) {
     let port = *shared.port.lock().unwrap();
     let sni = shared.sni.lock().unwrap().clone();
     let use_fake_tls = shared.use_fake_tls.load(Ordering::Relaxed);
+    let no_secure = shared.no_secure.load(Ordering::Relaxed);
 
     let mut cfg = proxy::Config::default_gui();
     cfg.port = port;
+    cfg.no_secure = no_secure;
     if use_fake_tls {
         cfg.fake_tls_domain = sni;
     } else {
@@ -360,6 +369,7 @@ fn main() {
     let port = Arc::new(Mutex::new(app_cfg.port));
     let sni = Arc::new(Mutex::new(app_cfg.sni.clone()));
     let use_fake_tls = Arc::new(AtomicBool::new(app_cfg.use_fake_tls));
+    let no_secure = Arc::new(AtomicBool::new(app_cfg.no_secure));
 
     let event_loop = EventLoopBuilder::<CustomEvent>::with_user_event().build();
 
@@ -405,6 +415,7 @@ fn main() {
         port: port.clone(),
         sni: sni.clone(),
         use_fake_tls: use_fake_tls.clone(),
+        no_secure: no_secure.clone(),
         tray: tray_arc.clone(),
         hicon_dark,
         hicon_green,
@@ -482,6 +493,7 @@ fn main() {
                     "port": p,
                     "sni": s,
                     "use_fake_tls": fake_tls,
+                    "no_secure": shared.no_secure.load(Ordering::Relaxed),
                     "is_autostart": autostart::is_autostart_enabled(),
                     "is_logging": shared.logger.is_enabled(),
                     "version": "1.0.0",
@@ -542,6 +554,9 @@ fn main() {
                             }
                             if let Some(tls) = msg.use_fake_tls {
                                 shared.use_fake_tls.store(tls, Ordering::Relaxed);
+                            }
+                            if let Some(ns) = msg.no_secure {
+                                shared.no_secure.store(ns, Ordering::Relaxed);
                             }
                             shared.save_config();
                         }
