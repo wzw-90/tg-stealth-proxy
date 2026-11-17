@@ -1,6 +1,6 @@
 [package]
 name = "tg-stealth-proxy"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 authors = ["Flowseal contributors", "Telegram Stealth Proxy Authors"]
 description = "High-performance Telegram MTProto & WebSocket Stealth Proxy with Modern Desktop GUI for Windows"

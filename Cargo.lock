@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "tg-stealth-proxy"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes",
  "bytes",

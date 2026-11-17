@@ -374,7 +374,7 @@ fn main() {
     let event_loop = EventLoopBuilder::<CustomEvent>::with_user_event().build();
 
     let window = WindowBuilder::new()
-        .with_title("TG Stealth Proxy v1.0.0")
+        .with_title(format!("TG Stealth Proxy v{}", env!("CARGO_PKG_VERSION")))
         .with_inner_size(LogicalSize::new(560.0, 580.0))
         .with_resizable(false)
         .with_visible(!start_minimized)
@@ -496,7 +496,7 @@ fn main() {
                     "no_secure": shared.no_secure.load(Ordering::Relaxed),
                     "is_autostart": autostart::is_autostart_enabled(),
                     "is_logging": shared.logger.is_enabled(),
-                    "version": "1.0.0",
+                    "version": env!("CARGO_PKG_VERSION"),
                     "cf_route_info": cf_route_info,
                     "best_ping_ms": best_ping_ms,
                 });

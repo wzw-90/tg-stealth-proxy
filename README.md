@@ -1,4 +1,4 @@
-# ⚡ TG Stealth Proxy (v1.0.0)
+# ⚡ TG Stealth Proxy (v1.1.0)
 
 <p align="center">
   <img src="icon.ico" alt="TG Stealth Proxy Logo" width="96" height="96" />
@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/Language-Rust%202021-orange?logo=rust" alt="Rust" />
   <img src="https://img.shields.io/badge/Framework-Tokio%20%2B%20Wry%2FTao-purple" alt="Tokio" />
   <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License" />
-  <img src="https://img.shields.io/badge/Version-1.0.0-brightgreen" alt="Version" />
+  <img src="https://img.shields.io/badge/Version-1.1.0-brightgreen" alt="Version" />
 </p>
 
 ---
